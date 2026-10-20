@@ -14,13 +14,22 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: activity3-android
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Find project folder
+        id: project
+        run: |
+          if [ -f package.json ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f activity3-android/package.json ]; then
+            echo "dir=activity3-android" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: package.json not found"
+            find . -maxdepth 3 -name package.json
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,25 +43,40 @@ jobs:
           java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-      - name: Install dependencies
+      - name: Install npm dependencies
+        working-directory: ${{ steps.project.outputs.dir }}
         run: npm install
 
       - name: Check JavaScript
+        working-directory: ${{ steps.project.outputs.dir }}
         run: npm run check:js
 
-      - name: Generate Android project
-        run: npx cap add android
+      - name: Generate Android project if needed
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: |
+          if [ -f android/gradlew ]; then
+            echo "Android project already exists"
+          else
+            rm -rf android
+            npx cap add android
+          fi
 
-      - name: Sync Android project
+      - name: Sync Capacitor
+        working-directory: ${{ steps.project.outputs.dir }}
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Build APK
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           cd android
           chmod +x gradlew
@@ -62,5 +86,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Activity-3.0-APK
-          path: activity3-android/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.project.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
