@@ -40,26 +40,37 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Find project
+      - name: Extract project ZIP
         id: project
         shell: bash
         run: |
           set -e
 
-          PACKAGE_FILE=$(find . -type f -name package.json \
-            -not -path './.git/*' \
+          ZIP_FILE=$(find . -maxdepth 3 -type f -name '*.zip' -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP archive not found"
+            exit 1
+          fi
+
+          mkdir -p extracted-project
+          unzip -oq "$ZIP_FILE" -d extracted-project
+
+          PACKAGE_FILE=$(find extracted-project \
+            -type f -name package.json \
             -not -path '*/node_modules/*' \
             -print -quit)
 
           if [ -z "$PACKAGE_FILE" ]; then
-            echo "ERROR: package.json not found"
-            find . -maxdepth 5 -type f | head -150
+            echo "ERROR: ZIP does not contain package.json"
+            find extracted-project -maxdepth 5 -type f | head -100
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PACKAGE_FILE")
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Project directory: $PROJECT_DIR"
+          echo "Found project: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
 
       - name: Install dependencies
         working-directory: ${{ steps.project.outputs.dir }}
@@ -74,17 +85,13 @@ jobs:
         shell: bash
         run: |
           if [ -f android/gradlew ]; then
-            echo "Existing Android project found"
+            echo "Android project already exists"
           elif [ -d android ]; then
-            echo "Android folder exists but Gradle wrapper is missing"
+            echo "ERROR: Android folder exists but Gradle wrapper is missing"
             find android -maxdepth 3 -type f | head -100
             exit 1
-          elif [ -f capacitor.config.json ] || [ -f capacitor.config.ts ] || [ -f capacitor.config.js ]; then
-            npx cap add android
           else
-            echo "ERROR: Capacitor configuration is missing"
-            ls -la
-            exit 1
+            npx cap add android
           fi
 
       - name: Sync Capacitor
@@ -105,4 +112,3 @@ jobs:
           path: ${{ steps.project.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
-
