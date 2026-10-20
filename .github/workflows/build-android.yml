@@ -18,19 +18,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find project folder
-        id: project
-        run: |
-          if [ -f package.json ]; then
-            echo "dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f activity3-android/package.json ]; then
-            echo "dir=activity3-android" >> "$GITHUB_OUTPUT"
-          else
-            echo "ERROR: package.json not found"
-            find . -maxdepth 3 -name package.json
-            exit 1
-          fi
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -42,18 +29,57 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools
+      - name: Locate or extract project
+        id: project
+        shell: bash
+        run: |
+          set -e
 
-      - name: Install Android SDK packages
+          PACKAGE_FILE=$(find . \
+            -type f -name package.json \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -print -quit)
+
+          if [ -z "$PACKAGE_FILE" ]; then
+            ZIP_FILE=$(find . -maxdepth 4 \
+              -type f -name '*.zip' -print -quit)
+
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: No package.json or ZIP archive found."
+              echo "Repository contents:"
+              find . -maxdepth 4 -type f | head -100
+              exit 1
+            fi
+
+            mkdir -p extracted-project
+            unzip -oq "$ZIP_FILE" -d extracted-project
+
+            PACKAGE_FILE=$(find extracted-project \
+              -type f -name package.json \
+              -not -path '*/node_modules/*' \
+              -print -quit)
+          fi
+
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "ERROR: ZIP contains no package.json."
+            find . -maxdepth 5 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Project directory: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Install Android SDK components
         run: |
           sdkmanager --install \
+            "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Install npm dependencies
+      - name: Install dependencies
         working-directory: ${{ steps.project.outputs.dir }}
         run: npm install
 
@@ -61,13 +87,12 @@ jobs:
         working-directory: ${{ steps.project.outputs.dir }}
         run: npm run check:js
 
-      - name: Generate Android project if needed
+      - name: Prepare Android project
         working-directory: ${{ steps.project.outputs.dir }}
         run: |
           if [ -f android/gradlew ]; then
             echo "Android project already exists"
           else
-            rm -rf android
             npx cap add android
           fi
 
